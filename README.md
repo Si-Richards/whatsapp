@@ -1,4 +1,4 @@
-# VoiceHost WhatsApp POC
+# WhatsApp POC
 
 Proof-of-concept shared WhatsApp inbox using Meta's WhatsApp Cloud API directly.
 
@@ -108,7 +108,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 This is intentionally not production-ready yet. It currently has:
 
 - one WhatsApp business number
-- no VoiceHost authentication
+- no authentication
 - no multi-tenancy
 - no agent assignment/queues
 - no approved-template UI
