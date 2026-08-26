@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from app.models import Conversation, Message
 from app.webhook import process_webhook
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -25,6 +27,11 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    logger.info(
+        "Webhook diagnostics: app_secret_configured=%s verify_token_configured=%s",
+        bool(settings.meta_app_secret),
+        bool(settings.whatsapp_verify_token),
+    )
 
 
 @app.get("/health")
@@ -125,11 +132,30 @@ def verify_webhook(
 async def webhook(request: Request, db: Session = Depends(get_db)):
     body = await request.body()
     signature = request.headers.get("x-hub-signature-256")
-    if not verify_signature(body, signature):
+    signature_present = bool(signature)
+    signature_scheme = signature.split("=", 1)[0] if signature and "=" in signature else None
+    signature_length = len(signature) if signature else 0
+    secret_configured = bool(settings.meta_app_secret)
+    signature_valid = verify_signature(body, signature)
+
+    logger.info(
+        "WhatsApp webhook signature diagnostic: signature_header_present=%s signature_scheme=%s signature_length=%d body_length=%d app_secret_configured=%s signature_valid=%s client=%s",
+        signature_present,
+        signature_scheme,
+        signature_length,
+        len(body),
+        secret_configured,
+        signature_valid,
+        request.client.host if request.client else "unknown",
+    )
+
+    if not signature_valid:
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+
     process_webhook(db, payload)
     return {"status": "ok"}
