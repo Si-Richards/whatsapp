@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">V</span><strong>VoiceHost</strong></div>
+    <div><strong>WhatsApp</strong> <span class="muted">Proof of Concept</span></div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-title">Conversations</div>
+      {% if conversations %}
+        {% for item in conversations %}
+          <a class="conversation {% if selected and item.id == selected.id %}active{% endif %}" href="/?conversation={{ item.id }}">
+            <div class="avatar">{{ (item.display_name or item.wa_id)[0]|upper }}</div>
+            <div class="conversation-text">
+              <strong>{{ item.display_name or item.wa_id }}</strong>
+              <span>+{{ item.wa_id }}</span>
+            </div>
+            {% if item.unread_count %}<span class="badge">{{ item.unread_count }}</span>{% endif %}
+          </a>
+        {% endfor %}
+      {% else %}
+        <div class="empty-small">Incoming conversations will appear here.</div>
+      {% endif %}
+    </aside>
+
+    <section class="chat">
+      {% if selected %}
+        <div class="chat-header">
+          <div class="avatar large">{{ (selected.display_name or selected.wa_id)[0]|upper }}</div>
+          <div><strong>{{ selected.display_name or selected.wa_id }}</strong><span>+{{ selected.wa_id }}</span></div>
+        </div>
+        <div class="messages" id="messages">
+          {% for message in messages %}
+            <div class="message-row {{ message.direction }}">
+              <div class="bubble">
+                <div>{{ message.body or '[' ~ message.message_type ~ ']' }}</div>
+                <small>{{ message.timestamp.strftime('%H:%M') }}{% if message.direction == 'outbound' %} · {{ message.status or 'sent' }}{% endif %}</small>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+        <form class="composer" action="/send" method="post">
+          <input type="hidden" name="to" value="{{ selected.wa_id }}">
+          <input name="body" autocomplete="off" maxlength="4096" placeholder="Type a WhatsApp message…" required>
+          <button type="submit">Send</button>
+        </form>
+      {% else %}
+        <div class="empty-main">
+          <div class="wa-icon">W</div>
+          <h1>VoiceHost WhatsApp</h1>
+          <p>Send a message below to start your first conversation.</p>
+          <form class="new-message" action="/send" method="post">
+            <input name="to" placeholder="447700900123" required>
+            <input name="body" placeholder="Message" maxlength="4096" required>
+            <button type="submit">Send message</button>
+          </form>
+        </div>
+      {% endif %}
+    </section>
+  </main>
+  <script>const m=document.getElementById('messages');if(m){m.scrollTop=m.scrollHeight;}</script>
+</body>
+</html>
