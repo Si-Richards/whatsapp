@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -8,6 +8,17 @@ from app.database import Base
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    conversations: Mapped[list["Conversation"]] = relationship(back_populates="assigned_agent")
 
 
 class Conversation(Base):
@@ -18,7 +29,10 @@ class Conversation(Base):
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     unread_count: Mapped[int] = mapped_column(Integer, default=0)
+    assigned_agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    assigned_agent: Mapped[Agent | None] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
