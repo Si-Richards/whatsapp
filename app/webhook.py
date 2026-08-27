@@ -28,6 +28,7 @@ def _conversation(db: Session, wa_id: str, display_name: str | None = None) -> C
         db.flush()
     elif display_name:
         item.display_name = display_name
+    item.is_archived = False
     return item
 
 
@@ -137,8 +138,6 @@ async def process_webhook(db: Session, payload: dict) -> None:
 
     db.commit()
 
-    # Read acknowledgements are deliberately sent after persistence. If Meta is
-    # temporarily unavailable the webhook still remains safely stored locally.
     for wamid in dict.fromkeys(read_ids):
         try:
             await mark_message_read(wamid)
