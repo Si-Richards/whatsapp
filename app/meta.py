@@ -40,32 +40,98 @@ def _messages_url() -> str:
     )
 
 
-async def send_text(to: str, body: str) -> dict:
+def _media_upload_url() -> str:
+    return (
+        f"https://graph.facebook.com/{settings.meta_api_version}/"
+        f"{settings.whatsapp_phone_number_id}/media"
+    )
+
+
+async def send_text(to: str, body: str, reply_to: str | None = None) -> dict:
     if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
         raise MetaAPIError("WhatsApp credentials are not configured")
 
-    payload = {
+    payload: dict = {
         "messaging_product": "whatsapp",
         "recipient_type": "individual",
         "to": to,
         "type": "text",
         "text": {"preview_url": False, "body": body},
     }
-    headers = {
-        **_headers(),
-        "Content-Type": "application/json",
-    }
+    if reply_to:
+        payload["context"] = {"message_id": reply_to}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(_messages_url(), headers=headers, json=payload)
+        response = await client.post(
+            _messages_url(),
+            headers={**_headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
 
     if response.is_error:
         raise MetaAPIError(f"Meta API {response.status_code}: {response.text}")
     return response.json()
 
 
+async def send_media(
+    to: str,
+    content: bytes,
+    filename: str,
+    mime_type: str,
+    message_type: str,
+    caption: str | None = None,
+    reply_to: str | None = None,
+) -> dict:
+    """Upload media to Meta then send it to the recipient."""
+    if message_type not in {"image", "document", "audio", "video"}:
+        raise MetaAPIError(f"Unsupported outbound media type: {message_type}")
+    if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
+        raise MetaAPIError("WhatsApp credentials are not configured")
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        upload = await client.post(
+            _media_upload_url(),
+            headers=_headers(),
+            data={"messaging_product": "whatsapp", "type": mime_type},
+            files={"file": (filename, content, mime_type)},
+        )
+        if upload.is_error:
+            raise MetaAPIError(f"Meta media upload {upload.status_code}: {upload.text}")
+
+        media_id = upload.json().get("id")
+        if not media_id:
+            raise MetaAPIError("Meta media upload did not return a media ID")
+
+        media_payload: dict = {"id": media_id}
+        if caption and message_type in {"image", "document", "video"}:
+            media_payload["caption"] = caption
+        if message_type == "document":
+            media_payload["filename"] = filename
+
+        payload: dict = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": message_type,
+            message_type: media_payload,
+        }
+        if reply_to:
+            payload["context"] = {"message_id": reply_to}
+
+        sent = await client.post(
+            _messages_url(),
+            headers={**_headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
+        if sent.is_error:
+            raise MetaAPIError(f"Meta media send {sent.status_code}: {sent.text}")
+
+    result = sent.json()
+    result["uploaded_media_id"] = media_id
+    return result
+
+
 async def mark_message_read(message_id: str) -> dict:
-    """Tell WhatsApp that an inbound message has been read by VoiceHost."""
     if not settings.whatsapp_access_token or not settings.whatsapp_phone_number_id:
         raise MetaAPIError("WhatsApp credentials are not configured")
 
@@ -74,13 +140,13 @@ async def mark_message_read(message_id: str) -> dict:
         "status": "read",
         "message_id": message_id,
     }
-    headers = {
-        **_headers(),
-        "Content-Type": "application/json",
-    }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(_messages_url(), headers=headers, json=payload)
+        response = await client.post(
+            _messages_url(),
+            headers={**_headers(), "Content-Type": "application/json"},
+            json=payload,
+        )
 
     if response.is_error:
         raise MetaAPIError(
@@ -95,14 +161,15 @@ def _safe_filename(value: str) -> str:
     return value[:180] or "attachment"
 
 
+def safe_filename(value: str) -> str:
+    return _safe_filename(value)
+
+
 async def download_media(media_id: str, preferred_filename: str | None = None) -> dict:
-    """Resolve Meta's temporary media URL and persist the media locally."""
     if not settings.whatsapp_access_token:
         raise MetaAPIError("WhatsApp access token is not configured")
 
-    metadata_url = (
-        f"https://graph.facebook.com/{settings.meta_api_version}/{media_id}"
-    )
+    metadata_url = f"https://graph.facebook.com/{settings.meta_api_version}/{media_id}"
 
     async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         metadata_response = await client.get(metadata_url, headers=_headers())
