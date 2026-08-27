@@ -9,96 +9,189 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark">V</span><strong>VoiceHost</strong></div>
-    <div><strong>WhatsApp</strong> <span class="muted">Proof of Concept</span></div>
+    <div><strong>Conversations</strong> <span class="muted">WhatsApp · Phase 2</span></div>
   </header>
 
   <main class="layout">
     <aside class="sidebar">
-      <div class="sidebar-title">Conversations</div>
-      {% if conversations %}
-        {% for item in conversations %}
-          <a class="conversation {% if selected and item.id == selected.id %}active{% endif %}" href="/?conversation={{ item.id }}">
-            <div class="avatar">{{ (item.display_name or item.wa_id)[0]|upper }}</div>
-            <div class="conversation-text">
-              <strong>{{ item.display_name or item.wa_id }}</strong>
-              <span>+{{ item.wa_id }}</span>
-            </div>
-            {% if item.unread_count %}<span class="badge">{{ item.unread_count }}</span>{% endif %}
-          </a>
-        {% endfor %}
-      {% else %}
-        <div class="empty-small">Incoming conversations will appear here.</div>
-      {% endif %}
+      <div class="sidebar-head">
+        <div class="sidebar-title">Conversations</div>
+        <form class="search-form" method="get" action="/">
+          <input type="search" name="q" value="{{ search_query }}" placeholder="Search name, number or message">
+          <input type="hidden" name="filter" value="{{ conversation_filter }}">
+        </form>
+        <nav class="filters">
+          <a class="{% if conversation_filter == 'open' %}active{% endif %}" href="/?filter=open&q={{ search_query }}">Open</a>
+          <a class="{% if conversation_filter == 'unread' %}active{% endif %}" href="/?filter=unread&q={{ search_query }}">Unread</a>
+          <a class="{% if conversation_filter == 'archived' %}active{% endif %}" href="/?filter=archived&q={{ search_query }}">Archived</a>
+          <a class="{% if conversation_filter == 'all' %}active{% endif %}" href="/?filter=all&q={{ search_query }}">All</a>
+        </nav>
+      </div>
+
+      <div class="conversation-list">
+        {% if conversations %}
+          {% for item in conversations %}
+            <a class="conversation {% if selected and item.id == selected.id %}active{% endif %}" href="/?conversation={{ item.id }}&filter={{ conversation_filter }}&q={{ search_query }}">
+              <div class="avatar">{{ (item.display_name or item.wa_id)[0]|upper }}</div>
+              <div class="conversation-text">
+                <strong>{{ item.display_name or item.wa_id }}</strong>
+                <span>+{{ item.wa_id }}</span>
+                <small>{{ item.assigned_agent.name if item.assigned_agent else 'Unassigned' }}</small>
+              </div>
+              {% if item.unread_count %}<span class="badge">{{ item.unread_count }}</span>{% endif %}
+            </a>
+          {% endfor %}
+        {% else %}
+          <div class="empty-small">No conversations match this view.</div>
+        {% endif %}
+      </div>
     </aside>
 
     <section class="chat">
       {% if selected %}
         <div class="chat-header">
           <div class="avatar large">{{ (selected.display_name or selected.wa_id)[0]|upper }}</div>
-          <div><strong>{{ selected.display_name or selected.wa_id }}</strong><span>+{{ selected.wa_id }}</span></div>
+          <div class="chat-identity">
+            <strong>{{ selected.display_name or selected.wa_id }}</strong>
+            <span>+{{ selected.wa_id }}</span>
+          </div>
+          <button id="live-notice" class="live-notice" type="button" hidden>New activity · refresh</button>
         </div>
+
         <div class="messages" id="messages">
           {% for message in messages %}
-            <div class="message-row {{ message.direction }}">
-              <div class="bubble">
-                {% if message.media_url %}
-                  {% if message.message_type in ['image', 'sticker'] %}
-                    <a href="{{ message.media_url }}" target="_blank" rel="noopener">
-                      <img class="message-image {% if message.message_type == 'sticker' %}sticker{% endif %}" src="{{ message.media_url }}" alt="WhatsApp {{ message.message_type }}">
-                    </a>
-                  {% elif message.message_type == 'video' %}
-                    <video class="message-video" controls preload="metadata">
-                      <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'video/mp4' }}">
-                    </video>
-                  {% elif message.message_type == 'audio' %}
-                    <audio class="message-audio" controls preload="metadata">
-                      <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'audio/ogg' }}">
-                    </audio>
-                  {% elif message.message_type == 'document' %}
-                    <a class="document-link" href="{{ message.media_url }}" target="_blank" rel="noopener">📎 {{ message.media_filename or 'Download document' }}</a>
-                  {% endif %}
-                {% endif %}
-
-                {% if message.body and not (message.message_type == 'document' and message.media_url and message.body == message.media_filename) %}
+            {% if message.direction == 'internal' %}
+              <div class="message-row internal">
+                <div class="bubble note-bubble">
+                  <div class="note-label">Internal note</div>
                   <div class="message-body">{{ message.body }}</div>
-                {% elif not message.media_url %}
-                  <div class="message-body">[{{ message.message_type }} message]</div>
-                {% endif %}
-
-                <small class="message-meta">
-                  {{ message.timestamp.strftime('%H:%M') }}
-                  {% if message.direction == 'outbound' %}
-                    <span class="status status-{{ message.status or 'sent' }}">
-                      {% if message.status == 'read' %}✓✓ read
-                      {% elif message.status == 'delivered' %}✓✓ delivered
-                      {% elif message.status == 'sent' %}✓ sent
-                      {% else %}{{ message.status or 'sent' }}{% endif %}
-                    </span>
-                  {% endif %}
-                </small>
+                  <small>{{ message.timestamp.strftime('%H:%M') }}</small>
+                </div>
               </div>
-            </div>
+            {% else %}
+              <div class="message-row {{ message.direction }}">
+                <div class="bubble">
+                  {% if message.reply_to_wamid %}
+                    <div class="quoted-reply">{{ message.reply_preview }}</div>
+                  {% endif %}
+
+                  {% if message.media_url %}
+                    {% if message.message_type in ['image', 'sticker'] %}
+                      <a href="{{ message.media_url }}" target="_blank" rel="noopener">
+                        <img class="message-image {% if message.message_type == 'sticker' %}sticker{% endif %}" src="{{ message.media_url }}" alt="WhatsApp {{ message.message_type }}">
+                      </a>
+                    {% elif message.message_type == 'video' %}
+                      <video class="message-video" controls preload="metadata">
+                        <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'video/mp4' }}">
+                      </video>
+                    {% elif message.message_type == 'audio' %}
+                      <audio class="message-audio" controls preload="metadata">
+                        <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'audio/ogg' }}">
+                      </audio>
+                    {% elif message.message_type == 'document' %}
+                      <a class="document-link" href="{{ message.media_url }}" target="_blank" rel="noopener">📎 {{ message.media_filename or 'Download document' }}</a>
+                    {% endif %}
+                  {% endif %}
+
+                  {% if message.body and not (message.message_type == 'document' and message.media_url and message.body == message.media_filename) and not (message.message_type in ['image','video','audio'] and message.body.startswith('[')) %}
+                    <div class="message-body">{{ message.body }}</div>
+                  {% elif not message.media_url %}
+                    <div class="message-body">[{{ message.message_type }} message]</div>
+                  {% endif %}
+
+                  <div class="message-footer">
+                    {% if message.wamid %}
+                      <button class="reply-button" type="button" data-reply-id="{{ message.wamid }}" data-reply-text="{{ (message.body or '[' ~ message.message_type ~ ' message]')|e }}">Reply</button>
+                    {% endif %}
+                    <small class="message-meta">
+                      {{ message.timestamp.strftime('%H:%M') }}
+                      {% if message.direction == 'outbound' %}
+                        <span class="status status-{{ message.status or 'sent' }}">
+                          {% if message.status == 'read' %}✓✓ read
+                          {% elif message.status == 'delivered' %}✓✓ delivered
+                          {% elif message.status == 'sent' %}✓ sent
+                          {% else %}{{ message.status or 'sent' }}{% endif %}
+                        </span>
+                      {% endif %}
+                    </small>
+                  </div>
+                </div>
+              </div>
+            {% endif %}
           {% endfor %}
         </div>
-        <form class="composer" action="/send" method="post">
+
+        <form id="composer" class="composer-wrap" action="/send" method="post" enctype="multipart/form-data">
           <input type="hidden" name="to" value="{{ selected.wa_id }}">
-          <input name="body" autocomplete="off" maxlength="4096" placeholder="Type a WhatsApp message…" required>
-          <button type="submit">Send</button>
+          <input id="reply-to" type="hidden" name="reply_to" value="">
+          <div id="reply-bar" class="reply-bar" hidden>
+            <div><strong>Replying to</strong><span id="reply-text"></span></div>
+            <button id="reply-cancel" type="button">×</button>
+          </div>
+          <div class="composer">
+            <label class="attach-button" for="attachment"><span>＋</span><span id="attachment-label">Attach</span></label>
+            <input id="attachment" class="file-input" type="file" name="attachment" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv">
+            <input id="message-body" name="body" autocomplete="off" maxlength="4096" placeholder="Type a WhatsApp message…">
+            <button type="submit">Send</button>
+          </div>
         </form>
       {% else %}
         <div class="empty-main">
           <div class="wa-icon">W</div>
-          <h1>VoiceHost WhatsApp</h1>
-          <p>Send a message below to start your first conversation.</p>
-          <form class="new-message" action="/send" method="post">
+          <h1>VoiceHost Conversations</h1>
+          <p>Choose a conversation, or start a new WhatsApp conversation.</p>
+          <form class="new-message" action="/send" method="post" enctype="multipart/form-data">
             <input name="to" placeholder="447700900123" required>
-            <input name="body" placeholder="Message" maxlength="4096" required>
-            <button type="submit">Send message</button>
+            <input name="body" placeholder="Message">
+            <input name="attachment" type="file">
+            <button type="submit">Send</button>
           </form>
         </div>
       {% endif %}
     </section>
+
+    <aside class="details">
+      {% if selected %}
+        <section class="detail-card">
+          <h3>Assignment</h3>
+          <form action="/conversations/{{ selected.id }}/assign" method="post">
+            <select name="agent_id" onchange="this.form.submit()">
+              <option value="">Unassigned</option>
+              {% for agent in agents %}
+                <option value="{{ agent.id }}" {% if selected.assigned_agent_id == agent.id %}selected{% endif %}>{{ agent.name }}</option>
+              {% endfor %}
+            </select>
+          </form>
+          <form class="inline-create" action="/agents" method="post">
+            <input name="name" placeholder="New agent name" required>
+            <button type="submit">Add</button>
+          </form>
+        </section>
+
+        <section class="detail-card">
+          <h3>Internal note</h3>
+          <form action="/conversations/{{ selected.id }}/notes" method="post">
+            <textarea name="body" rows="4" placeholder="Visible to VoiceHost agents only" required></textarea>
+            <button class="secondary-button" type="submit">Add note</button>
+          </form>
+        </section>
+
+        <section class="detail-card customer-card">
+          <h3>Customer</h3>
+          <dl>
+            <dt>Name</dt><dd>{{ selected.display_name or 'Unknown' }}</dd>
+            <dt>WhatsApp</dt><dd>+{{ selected.wa_id }}</dd>
+            <dt>Status</dt><dd>{{ 'Archived' if selected.is_archived else 'Open' }}</dd>
+          </dl>
+          <form action="/conversations/{{ selected.id }}/archive" method="post">
+            <button class="text-button" type="submit">{{ 'Restore conversation' if selected.is_archived else 'Archive conversation' }}</button>
+          </form>
+        </section>
+      {% else %}
+        <div class="details-empty">Conversation details will appear here.</div>
+      {% endif %}
+    </aside>
   </main>
-  <script>const m=document.getElementById('messages');if(m){m.scrollTop=m.scrollHeight;}</script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
