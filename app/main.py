@@ -17,21 +17,53 @@ from app.models import Conversation, Message
 from app.webhook import process_webhook
 
 BASE_DIR = Path(__file__).resolve().parent
+MEDIA_DIR = Path("data/media")
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title=settings.app_name)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(
         "Webhook diagnostics: app_secret_configured=%s verify_token_configured=%s",
         bool(settings.meta_app_secret),
         bool(settings.whatsapp_verify_token),
     )
+
+
+def _prepare_messages(messages: list[Message]) -> list[Message]:
+    """Attach non-persistent display metadata parsed from raw_payload."""
+    for message in messages:
+        message.media_url = None
+        message.media_filename = None
+        message.media_mime_type = None
+        message.media_size = None
+
+        if not message.raw_payload:
+            continue
+
+        try:
+            payload = json.loads(message.raw_payload)
+        except (TypeError, json.JSONDecodeError):
+            continue
+
+        media = payload.get("local_media") if isinstance(payload, dict) else None
+        if not isinstance(media, dict):
+            continue
+
+        message.media_url = media.get("url")
+        message.media_filename = media.get("filename")
+        message.media_mime_type = media.get("mime_type")
+        message.media_size = media.get("size")
+
+    return messages
 
 
 @app.get("/health")
@@ -45,7 +77,8 @@ def inbox(request: Request, conversation: int | None = None, db: Session = Depen
         select(Conversation).order_by(Conversation.last_message_at.desc())
     ).all()
     selected = None
-    messages = []
+    messages: list[Message] = []
+
     if conversation is not None:
         selected = db.get(Conversation, conversation)
         if selected:
@@ -63,6 +96,8 @@ def inbox(request: Request, conversation: int | None = None, db: Session = Depen
             .where(Message.conversation_id == selected.id)
             .order_by(Message.timestamp.asc())
         ).all()
+
+    _prepare_messages(messages)
 
     return templates.TemplateResponse(
         request=request,
@@ -102,16 +137,18 @@ async def send_message(
     if result.get("messages"):
         wamid = result["messages"][0].get("id")
     now = datetime.now(timezone.utc)
-    db.add(Message(
-        conversation_id=conversation.id,
-        wamid=wamid,
-        direction="outbound",
-        message_type="text",
-        body=body,
-        status="sent",
-        timestamp=now,
-        raw_payload=json.dumps(result),
-    ))
+    db.add(
+        Message(
+            conversation_id=conversation.id,
+            wamid=wamid,
+            direction="outbound",
+            message_type="text",
+            body=body,
+            status="sent",
+            timestamp=now,
+            raw_payload=json.dumps(result),
+        )
+    )
     conversation.last_message_at = now
     db.commit()
     return RedirectResponse(url=f"/?conversation={conversation.id}", status_code=303)
@@ -157,5 +194,5 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON") from exc
 
-    process_webhook(db, payload)
+    await process_webhook(db, payload)
     return {"status": "ok"}
