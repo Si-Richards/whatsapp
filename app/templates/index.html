@@ -41,8 +41,41 @@
           {% for message in messages %}
             <div class="message-row {{ message.direction }}">
               <div class="bubble">
-                <div>{{ message.body or '[' ~ message.message_type ~ ']' }}</div>
-                <small>{{ message.timestamp.strftime('%H:%M') }}{% if message.direction == 'outbound' %} · {{ message.status or 'sent' }}{% endif %}</small>
+                {% if message.media_url %}
+                  {% if message.message_type in ['image', 'sticker'] %}
+                    <a href="{{ message.media_url }}" target="_blank" rel="noopener">
+                      <img class="message-image {% if message.message_type == 'sticker' %}sticker{% endif %}" src="{{ message.media_url }}" alt="WhatsApp {{ message.message_type }}">
+                    </a>
+                  {% elif message.message_type == 'video' %}
+                    <video class="message-video" controls preload="metadata">
+                      <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'video/mp4' }}">
+                    </video>
+                  {% elif message.message_type == 'audio' %}
+                    <audio class="message-audio" controls preload="metadata">
+                      <source src="{{ message.media_url }}" type="{{ message.media_mime_type or 'audio/ogg' }}">
+                    </audio>
+                  {% elif message.message_type == 'document' %}
+                    <a class="document-link" href="{{ message.media_url }}" target="_blank" rel="noopener">📎 {{ message.media_filename or 'Download document' }}</a>
+                  {% endif %}
+                {% endif %}
+
+                {% if message.body and not (message.message_type == 'document' and message.media_url and message.body == message.media_filename) %}
+                  <div class="message-body">{{ message.body }}</div>
+                {% elif not message.media_url %}
+                  <div class="message-body">[{{ message.message_type }} message]</div>
+                {% endif %}
+
+                <small class="message-meta">
+                  {{ message.timestamp.strftime('%H:%M') }}
+                  {% if message.direction == 'outbound' %}
+                    <span class="status status-{{ message.status or 'sent' }}">
+                      {% if message.status == 'read' %}✓✓ read
+                      {% elif message.status == 'delivered' %}✓✓ delivered
+                      {% elif message.status == 'sent' %}✓ sent
+                      {% else %}{{ message.status or 'sent' }}{% endif %}
+                    </span>
+                  {% endif %}
+                </small>
               </div>
             </div>
           {% endfor %}
