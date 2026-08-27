@@ -105,6 +105,33 @@ def _conversation_redirect(conversation_id: int) -> RedirectResponse:
     return RedirectResponse(url=f"/?conversation={conversation_id}", status_code=303)
 
 
+def _live_fingerprint() -> str:
+    """Build the SSE change fingerprint in a worker thread, not the event loop."""
+    with SessionLocal() as db:
+        conversations = db.execute(
+            select(
+                Conversation.id,
+                Conversation.unread_count,
+                Conversation.last_message_at,
+                Conversation.assigned_agent_id,
+                Conversation.is_archived,
+            ).order_by(Conversation.id)
+        ).all()
+        messages = db.execute(
+            select(Message.id, Message.status)
+            .order_by(Message.id.desc())
+            .limit(150)
+        ).all()
+
+    return json.dumps(
+        {
+            "conversations": [tuple(str(value) for value in row) for row in conversations],
+            "messages": [tuple(str(value) for value in row) for row in messages],
+        },
+        sort_keys=True,
+    )
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": settings.app_name, "phase": 2}
@@ -326,39 +353,21 @@ def add_internal_note(
 async def live_events():
     async def event_stream():
         previous = None
-        while True:
-            with SessionLocal() as db:
-                conversations = db.execute(
-                    select(
-                        Conversation.id,
-                        Conversation.unread_count,
-                        Conversation.last_message_at,
-                        Conversation.assigned_agent_id,
-                        Conversation.is_archived,
-                    ).order_by(Conversation.id)
-                ).all()
-                messages = db.execute(
-                    select(Message.id, Message.status)
-                    .order_by(Message.id.desc())
-                    .limit(150)
-                ).all()
-                fingerprint = json.dumps(
-                    {
-                        "conversations": [tuple(str(value) for value in row) for row in conversations],
-                        "messages": [tuple(str(value) for value in row) for row in messages],
-                    },
-                    sort_keys=True,
-                )
+        try:
+            while True:
+                fingerprint = await asyncio.to_thread(_live_fingerprint)
 
-            if previous is None:
-                previous = fingerprint
-            elif fingerprint != previous:
-                previous = fingerprint
-                yield "event: refresh\ndata: changed\n\n"
-            else:
-                yield ": keepalive\n\n"
+                if previous is None:
+                    previous = fingerprint
+                elif fingerprint != previous:
+                    previous = fingerprint
+                    yield "event: refresh\ndata: changed\n\n"
+                else:
+                    yield ": keepalive\n\n"
 
-            await asyncio.sleep(2)
+                await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            return
 
     return StreamingResponse(
         event_stream(),
