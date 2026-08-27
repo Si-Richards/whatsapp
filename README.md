@@ -1,23 +1,37 @@
-# WhatsApp POC
+# VoiceHost WhatsApp POC
 
 Proof-of-concept shared WhatsApp inbox using Meta's WhatsApp Cloud API directly.
 
-## Features
+## Phase 2 features
+
+The current build adds a more complete shared-agent workflow on top of the original two-way POC:
+
+- live inbox refresh using Server-Sent Events
+- conversation search across name, WhatsApp number and message body
+- Open / Unread / Archived / All filters
+- outbound text, image, document, audio and video sending
+- inbound image, document, audio, video and sticker handling
+- reply-to-message support using WhatsApp message context
+- sent / delivered / read status display
+- automatic read acknowledgements for inbound messages
+- basic agents and conversation assignment
+- internal notes that are never sent to WhatsApp
+- archive / restore conversation workflow
+- new inbound activity automatically reopens an archived conversation
+- persistent media storage in the Docker data volume
+- lightweight migration of existing SQLite POC databases to the Phase 2 schema
+
+## Core platform features
 
 - FastAPI backend
-- Meta WhatsApp Cloud API outbound text messages
+- Meta WhatsApp Cloud API directly
 - Meta webhook verification
 - `X-Hub-Signature-256` webhook validation using the Meta App Secret
-- Incoming text-message persistence
-- Incoming image, document, audio, video and sticker download
-- Local media persistence under the Docker data volume
-- Automatic read acknowledgements for inbound WhatsApp messages
-- Sent/delivered/read status updates for outbound messages
-- Idempotency using WhatsApp message IDs (`wamid`)
+- idempotency using WhatsApp message IDs (`wamid`)
 - SQLite conversation/message store
-- Browser conversation inbox
+- browser shared inbox
 - Docker Compose deployment
-- No credentials committed to Git
+- no credentials committed to Git
 
 ## Requirements
 
@@ -28,7 +42,7 @@ You need a Meta developer app with WhatsApp configured and the following values:
 - WhatsApp access token
 - WhatsApp Phone Number ID
 - WhatsApp Business Account ID (WABA ID)
-- A verify token that you choose yourself
+- a verify token that you choose yourself
 
 ## Quick start
 
@@ -53,17 +67,25 @@ Check the application:
 curl http://127.0.0.1:8000/health
 ```
 
-Expected response:
+Expected Phase 2 response:
 
 ```json
-{"status":"ok","service":"VoiceHost WhatsApp POC"}
+{"status":"ok","service":"VoiceHost WhatsApp POC","phase":2}
 ```
 
-Open the inbox at:
+## Upgrading an existing POC install
 
-```text
-http://SERVER-IP:8000/
+Pull and rebuild:
+
+```bash
+cd /opt/whatsapp
+git pull
+docker compose down
+docker compose up -d --build
+docker compose logs -f
 ```
+
+The application creates the new `agents` table and adds the Phase 2 conversation columns to an existing SQLite database on startup. Existing conversations and messages are retained.
 
 ## Meta webhook configuration
 
@@ -77,69 +99,75 @@ POST /webhook   Meta webhook events
 Meta needs a publicly reachable HTTPS callback, for example:
 
 ```text
-https://whatsapp.example.com/webhook
+https://devhook.example.com/webhook
 ```
 
-In the Meta developer console configure the callback URL and set the Verify Token to exactly the value of `WHATSAPP_VERIFY_TOKEN` in `.env`.
+Configure the callback in the Meta developer console and set the Verify Token to exactly the value of `WHATSAPP_VERIFY_TOKEN` in `.env`.
 
-Subscribe the WhatsApp webhook to the `messages` field. This carries inbound messages and message status notifications used by the POC.
+Subscribe the WhatsApp webhook to the `messages` field.
 
-The POST endpoint validates Meta's `X-Hub-Signature-256` HMAC using `META_APP_SECRET`. An invalid or missing signature is rejected.
+The POST endpoint validates Meta's `X-Hub-Signature-256` HMAC using `META_APP_SECRET`.
 
-## Sending messages
+## Live inbox
 
-The UI sends text messages through the backend. Credentials never reach browser JavaScript.
+The browser opens an SSE connection to:
 
-A free-form text reply is normally usable while the applicable WhatsApp customer-service conversation window is open. Starting/restarting business conversations outside that window normally requires an approved WhatsApp message template. Template sending is intentionally not included in this first POC yet.
+```text
+/events
+```
 
-## Receiving media
+The POC watches conversation and message state every two seconds. If new activity arrives and the agent is not currently composing a message, the inbox refreshes automatically. If the agent is typing or has selected an attachment, a **New activity · refresh** notice appears instead so draft text is not discarded.
 
-For incoming `image`, `document`, `audio`, `video` and `sticker` messages, the application resolves Meta's media ID, downloads the media using the configured WhatsApp access token and stores it under:
+When using Nginx, SSE normally works with the application's `X-Accel-Buffering: no` response header. If your reverse proxy still buffers the event stream, add this to the proxy location:
+
+```nginx
+proxy_buffering off;
+proxy_cache off;
+```
+
+## Outbound media
+
+The composer accepts an optional attachment. The backend uploads it to Meta, sends the resulting media ID through WhatsApp, and stores a local copy under:
 
 ```text
 data/media/
 ```
 
-Docker Compose mounts `/app/data` in the persistent `whatsapp-data` volume, so downloaded media survives container recreation.
+The current POC limits browser uploads to 25 MB. Meta's own media-type and size limits still apply and may be lower depending on the media type.
 
-The inbox renders images and stickers inline, provides audio/video players and provides a download link for documents.
+## Reply-to-message
 
-Media received before this feature was added remains stored in the database as the original placeholder and is not downloaded retrospectively.
+Hover a WhatsApp message and choose **Reply**. The composer records the original `wamid` and the outbound request includes a WhatsApp message context. Incoming contextual replies are also rendered with a quoted preview when the referenced message exists locally.
+
+## Agents and assignment
+
+Phase 2 introduces a simple `agents` table. Agents can be added from the conversation details panel and conversations can be assigned or returned to **Unassigned**.
+
+This is deliberately a basic POC model: there is still no authentication or mapping between an authenticated VoiceHost portal user and an agent record.
+
+## Internal notes
+
+Internal notes are stored as local messages with direction `internal`. They appear in the timeline but are never sent to Meta/WhatsApp.
 
 ## Read receipts
 
-After an inbound message has been safely persisted, the application sends a WhatsApp `status: read` acknowledgement for the message ID. This tells WhatsApp that the message has been read by the VoiceHost application.
+After an inbound message has been persisted, the application sends a WhatsApp `status: read` acknowledgement for that `wamid`.
 
-Status webhooks for outbound messages continue to update the stored message state (`sent`, `delivered`, `read`) and are displayed in the inbox.
+Status webhooks for outbound messages update the local state through `sent`, `delivered` and `read`.
 
-## Access token
+## Current limitations
 
-The temporary access token shown in Meta's API setup page is useful for initial testing but should not be treated as a production credential. Move to the appropriate long-lived/system-user token setup before production use.
+This remains a proof of concept rather than a production contact-centre platform. Important remaining work includes:
 
-## Development without Docker
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## Current POC limitations
-
-This is intentionally not production-ready yet. It currently has:
-
-- one WhatsApp business number
-- no authentication
-- no multi-tenancy
-- no agent assignment/queues
-- no approved-template UI
-- no outbound media upload UI
-- no PostgreSQL migration layer
-- media downloads are performed inline during webhook processing
-
-These are logical next phases after proving end-to-end Meta connectivity.
+- authentication and real VoiceHost user identity
+- multi-tenancy and reseller/customer isolation
+- PostgreSQL and proper database migrations
+- background queue/worker processing for webhooks and media
+- approved WhatsApp template management and conversation-window enforcement
+- multiple WhatsApp numbers/WABAs
+- presence and collision prevention when several agents open the same conversation
+- audit/event history for assignment and administrative changes
+- rate limiting and production observability
 
 ## Security
 
