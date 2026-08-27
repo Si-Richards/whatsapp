@@ -9,7 +9,10 @@ Proof-of-concept shared WhatsApp inbox using Meta's WhatsApp Cloud API directly.
 - Meta webhook verification
 - `X-Hub-Signature-256` webhook validation using the Meta App Secret
 - Incoming text-message persistence
-- Sent/delivered/read status updates
+- Incoming image, document, audio, video and sticker download
+- Local media persistence under the Docker data volume
+- Automatic read acknowledgements for inbound WhatsApp messages
+- Sent/delivered/read status updates for outbound messages
 - Idempotency using WhatsApp message IDs (`wamid`)
 - SQLite conversation/message store
 - Browser conversation inbox
@@ -89,6 +92,26 @@ The UI sends text messages through the backend. Credentials never reach browser 
 
 A free-form text reply is normally usable while the applicable WhatsApp customer-service conversation window is open. Starting/restarting business conversations outside that window normally requires an approved WhatsApp message template. Template sending is intentionally not included in this first POC yet.
 
+## Receiving media
+
+For incoming `image`, `document`, `audio`, `video` and `sticker` messages, the application resolves Meta's media ID, downloads the media using the configured WhatsApp access token and stores it under:
+
+```text
+data/media/
+```
+
+Docker Compose mounts `/app/data` in the persistent `whatsapp-data` volume, so downloaded media survives container recreation.
+
+The inbox renders images and stickers inline, provides audio/video players and provides a download link for documents.
+
+Media received before this feature was added remains stored in the database as the original placeholder and is not downloaded retrospectively.
+
+## Read receipts
+
+After an inbound message has been safely persisted, the application sends a WhatsApp `status: read` acknowledgement for the message ID. This tells WhatsApp that the message has been read by the VoiceHost application.
+
+Status webhooks for outbound messages continue to update the stored message state (`sent`, `delivered`, `read`) and are displayed in the inbox.
+
 ## Access token
 
 The temporary access token shown in Meta's API setup page is useful for initial testing but should not be treated as a production credential. Move to the appropriate long-lived/system-user token setup before production use.
@@ -112,9 +135,9 @@ This is intentionally not production-ready yet. It currently has:
 - no multi-tenancy
 - no agent assignment/queues
 - no approved-template UI
-- no media download/upload handling
+- no outbound media upload UI
 - no PostgreSQL migration layer
-- synchronous database webhook processing
+- media downloads are performed inline during webhook processing
 
 These are logical next phases after proving end-to-end Meta connectivity.
 
